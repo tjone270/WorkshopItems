@@ -1,6 +1,6 @@
 # WorkshopItems
 
-A Windows desktop application for managing Steam Workshop items, detecting inconsistencies, and performing maintenance operations on workshop content.
+A Windows desktop application for managing Steam Workshop items, detecting inconsistencies, and performing maintenance operations on cached workshop content.
 
 ![.NET](https://img.shields.io/badge/.NET-8.0-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
