@@ -1,0 +1,130 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: true
+        type: string
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_PATH: 'WorkshopItems.csproj'
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Determine version
+      id: version
+      run: |
+        if ("${{ github.event_name }}" -eq "push") {
+          $version = "${{ github.ref_name }}".TrimStart('v')
+        } else {
+          $version = "${{ github.event.inputs.version }}"
+        }
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+        echo "VERSION_TAG=v$version" >> $env:GITHUB_OUTPUT
+      shell: pwsh
+
+    - name: Update project version
+      run: |
+        $content = Get-Content ${{ env.PROJECT_PATH }} -Raw
+        $content = $content -replace '<Version>.*</Version>', '<Version>${{ steps.version.outputs.VERSION }}</Version>'
+        Set-Content ${{ env.PROJECT_PATH }} $content
+      shell: pwsh
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.PROJECT_PATH }}
+
+    - name: Build
+      run: dotnet build ${{ env.PROJECT_PATH }} --configuration Release --no-restore
+
+    - name: Publish
+      run: |
+        dotnet publish ${{ env.PROJECT_PATH }} `
+          -c Release `
+          -r win-x64 `
+          --self-contained false `
+          -p:PublishSingleFile=true `
+          -p:PublishReadyToRun=true `
+          -p:IncludeNativeLibrariesForSelfExtract=true `
+          -o ./publish
+      shell: pwsh
+
+    - name: Create output archive
+      run: |
+        # Framework-dependent package
+        Compress-Archive -Path ./publish/* -DestinationPath ./WorkshopItems-${{ steps.version.outputs.VERSION }}-win-x64.zip
+      shell: pwsh
+
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        $notes = @"
+        ## WorkshopItems ${{ steps.version.outputs.VERSION }}
+        
+        ### Requirements
+        - Windows 10/11 (64-bit).
+        - Administrator privileges may be required for some operations.
+        
+        ### Running
+        1. Download the ZIP file below.
+        2. Extract to any folder.
+        3. Run `WorkshopItems.exe`.
+        
+        ### What's New
+        Please see the [commit history](../../commits/${{ steps.version.outputs.VERSION_TAG }}) for detailed changes.
+        "@
+
+        # Write to file for the release
+        $notes | Out-File -FilePath release_notes.md -Encoding UTF8
+        
+        # Also set as output
+        echo "RELEASE_NOTES<<EOF" >> $env:GITHUB_OUTPUT
+        echo $notes >> $env:GITHUB_OUTPUT
+        echo "EOF" >> $env:GITHUB_OUTPUT
+      shell: pwsh
+
+    - name: Create GitHub release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.VERSION_TAG }}
+        name: Release v${{ steps.version.outputs.VERSION }}
+        body_path: release_notes.md
+        draft: false
+        prerelease: false
+        files: |
+          ./WorkshopItems-${{ steps.version.outputs.VERSION }}-win-x64.zip
+
+    - name: Prepare release checksums
+      run: |
+        Get-FileHash ./WorkshopItems-*.zip -Algorithm SHA256 | 
+          ForEach-Object { "$($_.Hash)  $(Split-Path $_.Path -Leaf)" } |
+          Out-File -FilePath checksums.sha256 -Encoding UTF8
+      shell: pwsh
+
+    - name: Update release with checksums
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.VERSION_TAG }}
+        files: |
+          ./checksums.sha256
